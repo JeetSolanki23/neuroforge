@@ -1,0 +1,25 @@
+[project]
+name = "neuroforge"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = [
+  "langgraph",
+  "anthropic",
+  "openai",
+  "chromadb",
+  "sentence-transformers",
+  "pydantic>=2.0",
+  "pydantic-settings",
+  "structlog",
+  "typer"
+]
+
+[project.optional-dependencies]
+dev = ["pytest", "pytest-cov", "ruff"]
+
+[project.scripts]
+neuroforge = "neuroforge.cli:app"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
