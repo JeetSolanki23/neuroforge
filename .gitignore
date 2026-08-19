@@ -1,0 +1,159 @@
+# =============================================================================
+# NeuroForge — .gitignore
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Runtime Memory (never commit — grows large, contains operational data)
+# -----------------------------------------------------------------------------
+memory-vault/projects/
+memory-vault/agents/
+memory-vault/tools/
+memory-vault/knowledge/
+neuroforge-memory/
+
+# Keep the memory-vault directory structure but not contents
+!memory-vault/.gitkeep
+
+# ChromaDB local persistence
+chroma/
+*.chroma
+
+# -----------------------------------------------------------------------------
+# Environment & Secrets
+# -----------------------------------------------------------------------------
+.env
+.env.local
+.env.*.local
+*.key
+*.pem
+secrets/
+
+# -----------------------------------------------------------------------------
+# Python
+# -----------------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+eggs/
+parts/
+var/
+sdist/
+develop-eggs/
+.installed.cfg
+lib/
+lib64/
+wheels/
+share/python-wheels/
+MANIFEST
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+.python-version
+
+# PyInstaller
+*.manifest
+*.spec
+
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Unit test / coverage
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.pytest_cache/
+pytestdebug.log
+
+# mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# ruff / linting
+.ruff_cache/
+
+# -----------------------------------------------------------------------------
+# Jupyter (if used for experimentation)
+# -----------------------------------------------------------------------------
+.ipynb_checkpoints
+*.ipynb
+
+# -----------------------------------------------------------------------------
+# OS
+# -----------------------------------------------------------------------------
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.Spotlight-V100
+.Trashes
+
+# Windows
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+*.lnk
+
+# Linux
+*~
+
+# -----------------------------------------------------------------------------
+# Editors & IDEs
+# -----------------------------------------------------------------------------
+.vscode/
+!.vscode/extensions.json
+.idea/
+*.swp
+*.swo
+*.sublime-project
+*.sublime-workspace
+
+# -----------------------------------------------------------------------------
+# Logs & Temp
+# -----------------------------------------------------------------------------
+logs/
+*.log
+*.tmp
+*.temp
+tmp/
+temp/
+
+# -----------------------------------------------------------------------------
+# Node (if any tooling uses it)
+# -----------------------------------------------------------------------------
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# -----------------------------------------------------------------------------
+# Docker (if used later)
+# -----------------------------------------------------------------------------
+.docker/
+
+# -----------------------------------------------------------------------------
+# Agent output artifacts (temp working files)
+# -----------------------------------------------------------------------------
+.agent-workspace/
+agent-outputs/
