@@ -29,8 +29,24 @@ def run(goal: str = typer.Argument(..., help="Goal for the AI team to build")):
     """Run NeuroForge with a goal."""
     if not _ensure_initialized():
         raise typer.Exit(1)
+
+    from neuroforge.workflows.runner import run_project
+
     typer.echo(f"NeuroForge starting — goal: {goal}")
-    typer.echo("Orchestration layer not yet implemented (Phase 3).")
+    final_state = run_project(goal)
+    phase = final_state.get("current_phase", "unknown")
+    typer.echo(f"Project {final_state.get('project_id')} — phase: {phase}")
+
+    if final_state.get("needs_human_input"):
+        typer.echo(
+            f"⚠ Human input needed: {final_state.get('human_input_reason')}"
+        )
+    if final_state.get("error"):
+        typer.echo(f"✗ Error: {final_state.get('error')}")
+        raise typer.Exit(1)
+
+    for msg in final_state.get("messages", []):
+        typer.echo(f"  {msg}")
 
 
 @app.command()
