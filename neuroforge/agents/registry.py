@@ -16,6 +16,7 @@ BOOTSTRAP_AGENT_IDS = [
     "prompt-engineer-agent",
     "tool-maker-agent",
     "memory-manager-agent",
+    "specialist-base-template",
 ]
 
 

@@ -29,15 +29,15 @@ def test_is_initialized_returns_true_when_seeded(monkeypatch):
     assert registry.is_initialized() is True
 
 
-def test_seed_bootstrap_agents_seeds_all_five(monkeypatch):
+def test_seed_bootstrap_agents_seeds_all_six(monkeypatch):
     mock_coll = MagicMock()
     mock_coll.get.return_value = {"ids": []}
     monkeypatch.setattr(registry, "get_collection", lambda name: mock_coll)
     monkeypatch.setattr(registry, "init_chroma", lambda: None)
 
     count = registry.seed_bootstrap_agents()
-    assert count == 5
-    assert mock_coll.add.call_count == 5
+    assert count == 6
+    assert mock_coll.add.call_count == 6
 
 
 def test_seed_bootstrap_agents_is_idempotent(monkeypatch):
@@ -47,8 +47,8 @@ def test_seed_bootstrap_agents_is_idempotent(monkeypatch):
     monkeypatch.setattr(registry, "init_chroma", lambda: None)
 
     count = registry.seed_bootstrap_agents()
-    assert count == 5
-    assert mock_coll.update.call_count == 5
+    assert count == 6
+    assert mock_coll.update.call_count == 6
 
 
 def test_load_agent_definition_returns_correct_fields(monkeypatch):
