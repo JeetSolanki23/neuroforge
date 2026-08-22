@@ -2,23 +2,38 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timezone
+from pathlib import Path
 
+from neuroforge.config import config
 from neuroforge.logger import get_logger
 from neuroforge.memory.chroma import get_collection, init_chroma
 
 logger = get_logger("persistence")
 
 
+def _get_vault_state_path(project_id: str) -> Path:
+    """Returns Path: config.MEMORY_VAULT_PATH / "projects" / project_id / "state.json"
+    Creates parent directories if they don't exist.
+    """
+    vault_path = Path(config.MEMORY_VAULT_PATH)
+    project_dir = vault_path / "projects" / project_id
+    project_dir.mkdir(parents=True, exist_ok=True)
+    return project_dir / "state.json"
+
+
 def save_project_state(state: dict) -> bool:
-    """Saves full ProjectState to ChromaDB project_memory collection.
+    """Saves full ProjectState to vault file and lightweight metadata to ChromaDB.
 
     Uses project_id as the document ID. Upserts — safe to call on every state
     change. Returns True on success, False on failure.
     """
     try:
+        project_id = state["project_id"]
+        state_path = _get_vault_state_path(project_id)
+        state_path.write_text(json.dumps(state, indent=2), encoding="utf-8")
+
         init_chroma()
         collection = get_collection("project_memory")
-        project_id = state["project_id"]
 
         document = f"Project: {project_id}\nGoal: {state.get('raw_goal', '')}"
         metadata = {
@@ -30,7 +45,7 @@ def save_project_state(state: dict) -> bool:
             "completed_count": str(len(state.get("completed_task_ids", []))),
             "failed_count": str(len(state.get("failed_task_ids", []))),
             "updated_at": datetime.now(timezone.utc).isoformat(),
-            "state_json": json.dumps(state),
+            "vault_path": str(state_path),
         }
 
         existing = collection.get(ids=[project_id])
@@ -54,9 +69,9 @@ def save_project_state(state: dict) -> bool:
 
 
 def load_project_state(project_id: str) -> dict | None:
-    """Loads ProjectState from ChromaDB by project_id.
+    """Loads ProjectState from vault file referenced in ChromaDB metadata.
 
-    Returns the state dict or None if not found.
+    Returns the state dict or None if not found or vault file missing.
     """
     try:
         init_chroma()
@@ -65,8 +80,20 @@ def load_project_state(project_id: str) -> dict | None:
         if not results["ids"]:
             return None
         metadata = results["metadatas"][0]
-        state_json = metadata.get("state_json", "{}")
-        return json.loads(state_json)
+        vault_path_str = metadata.get("vault_path")
+        if not vault_path_str:
+            # Fallback for legacy state records if any
+            state_json = metadata.get("state_json")
+            if state_json:
+                return json.loads(state_json)
+            return None
+
+        vault_path = Path(vault_path_str)
+        if not vault_path.exists():
+            return None
+
+        content = vault_path.read_text(encoding="utf-8")
+        return json.loads(content)
     except Exception as e:
         logger.error(
             "load_project_state_failed", project_id=project_id, error=str(e)

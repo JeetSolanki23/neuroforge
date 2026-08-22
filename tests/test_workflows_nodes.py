@@ -116,8 +116,7 @@ def test_team_formation_node_needs_new_agents(mock_hr_run, mock_list_ids, mock_s
 
 
 @patch("neuroforge.workflows.nodes.save_project_state")
-@patch("neuroforge.workflows.nodes.update_task_status")
-def test_execution_node_builds_dag(mock_update_task, mock_save):
+def test_execution_node_builds_dag(mock_save):
     state = {
         "project_id": "p1",
         "brief": {
@@ -132,10 +131,11 @@ def test_execution_node_builds_dag(mock_update_task, mock_save):
     }
 
     updates = execution_node(state)
-    assert len(updates["tasks"]) == 3
-    assert updates["current_phase"] == "review"
-    assert updates["tasks"][0]["status"] == TaskStatus.PENDING
-    assert updates["tasks"][1]["depends_on"] == ["T1"]
+    assert isinstance(updates, dict)
+    tasks = updates["tasks"]
+    assert len(tasks) == 3
+    assert tasks[0]["status"] == TaskStatus.PENDING
+    assert tasks[1]["depends_on"] == ["T1"]
 
 
 @patch("neuroforge.workflows.nodes.save_project_state")

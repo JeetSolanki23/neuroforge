@@ -4,6 +4,7 @@ from neuroforge.agents.hr_agent import HRAgent
 from neuroforge.agents.memory_manager_agent import MemoryManagerAgent
 from neuroforge.agents.prompt_engineer_agent import PromptEngineerAgent
 from neuroforge.agents.resource_manager import ResourceManager
+from neuroforge.agents.specialist_agent import SpecialistAgent
 from neuroforge.agents.tool_maker_agent import ToolMakerAgent
 
 __all__ = [
@@ -16,4 +17,5 @@ __all__ = [
     "ToolMakerAgent",
     "MemoryManagerAgent",
     "ResourceManager",
+    "SpecialistAgent",
 ]

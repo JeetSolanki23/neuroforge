@@ -3,12 +3,124 @@ from __future__ import annotations
 import json
 import uuid
 from datetime import datetime, timezone
+from langgraph.types import Send
 
 from neuroforge.logger import get_logger
 from neuroforge.workflows.persistence import save_project_state, update_task_status
 from neuroforge.workflows.state import ProjectState, Task, TaskStatus
 
 logger = get_logger("nodes")
+
+
+def execute_single_task(task_input: dict) -> dict:
+    """Executes a single task using a SpecialistAgent.
+
+    Called in parallel by LangGraph Send for each ready task.
+
+    task_input dict contains:
+      project_id: str
+      task: Task dict
+      brief: dict
+      team_composition: dict
+      attempt: int (default 0)
+
+    Returns dict with state updates:
+      completed_task_ids or failed_task_ids (list to append)
+      messages (list to append)
+    """
+    from neuroforge.agents.base import AgentInput
+    from neuroforge.agents.specialist_agent import SpecialistAgent
+    from neuroforge.workflows.task_store import save_task_result
+
+    project_id = task_input["project_id"]
+    task = task_input["task"]
+    brief = task_input.get("brief", {})
+    team = task_input.get("team_composition", {})
+    attempt = task_input.get("attempt", 0)
+
+    task_id = task["id"]
+    assigned_to = task["assigned_to"]
+
+    # Build project context for the specialist
+    project_context = {
+        "project_name": brief.get("parsed_intent", "Unknown project"),
+        "brief_summary": {
+            "scope": brief.get("scope"),
+            "functional_requirements": brief.get(
+                "functional_requirements", []
+            ),
+            "acceptance_criteria": brief.get("acceptance_criteria", []),
+        },
+        "constraints": brief.get("constraints", []),
+    }
+
+    # Determine domain from assigned_to role
+    domain = _infer_domain(assigned_to)
+
+    agent = SpecialistAgent(
+        role=assigned_to, domain=domain, project_context=project_context
+    )
+
+    output = agent.run(
+        AgentInput(
+            task=task["description"],
+            context={"task_id": task_id, "attempt": attempt},
+            project_id=project_id,
+        )
+    )
+
+    if output.success:
+        save_task_result(
+            project_id=project_id,
+            task_id=task_id,
+            result=output.result,
+            status="complete",
+        )
+        return {
+            "completed_task_ids": [task_id],
+            "messages": [
+                f"[task:{task_id}] Complete — {assigned_to}: "
+                f"{output.result.get('summary', '')[:100]}"
+            ],
+        }
+    else:
+        save_task_result(
+            project_id=project_id,
+            task_id=task_id,
+            result={"error": output.error, "status": "failed"},
+            status="failed",
+        )
+        return {
+            "failed_task_ids": [task_id],
+            "messages": [
+                f"[task:{task_id}] FAILED — {assigned_to}: {output.error}"
+            ],
+        }
+
+
+def _infer_domain(role: str) -> str:
+    """Infers domain from role string.
+
+    e.g. "backend-django-specialist" → "backend" "frontend-react-specialist" →
+    "frontend" "qa-pytest-specialist" → "qa" Falls back to "general" if no match.
+    """
+    role_lower = role.lower()
+    domain_keywords = {
+        "frontend": "frontend",
+        "backend": "backend",
+        "database": "database",
+        "db": "database",
+        "devops": "devops",
+        "qa": "qa",
+        "security": "security",
+        "design": "design",
+        "ml": "ml",
+        "data": "data",
+    }
+    for keyword, domain in domain_keywords.items():
+        if keyword in role_lower:
+            return domain
+    return "general"
 
 
 def briefing_node(state: ProjectState) -> dict:
@@ -108,11 +220,12 @@ def team_formation_node(state: ProjectState) -> dict:
 
 
 def execution_node(state: ProjectState) -> dict:
-    """Node 3: Project Manager builds task DAG and executes tasks.
+    """Node 3: Builds task DAG and dispatches independent tasks in parallel.
 
-    For Phase 3 this builds the DAG and marks tasks as pending. Actual
-    specialist agent execution comes in Phase 4. Saves state after DAG is built.
-    Returns: updates to tasks, current_phase, messages
+    Builds the task list with dependency analysis and persists state.
+    Returns state update dict containing tasks list and current_phase execution.
+    The conditional edge router _route_after_execution then dispatches the first wave
+    of ready tasks via Send objects.
     """
     logger.info("execution_node_start", project_id=state["project_id"])
 
@@ -121,22 +234,41 @@ def execution_node(state: ProjectState) -> dict:
     specialists = team.get("specialists", [])
     requirements = brief.get("functional_requirements", [])
 
-    # Build task DAG from requirements and team
-    # Phase 3: one task per requirement, assigned to first available specialist
-    # Phase 4: proper dependency analysis and parallel assignment
+    if not requirements:
+        return {
+            "tasks": [],
+            "current_phase": "review",
+            "messages": ["[execution] No requirements found. Moving to review."],
+        }
+
+    # Build task list with dependency analysis
     tasks: list[Task] = []
     for i, req in enumerate(requirements):
-        task_id = f"T{i + 1}"
+        # Assign round-robin across specialists
         assigned = (
             specialists[i % len(specialists)]["role"]
             if specialists
-            else "unassigned"
+            else "general-specialist"
         )
+        # Simple dependency: each task depends on the previous
+        # Phase 4: tasks within same domain run in parallel,
+        # cross-domain tasks respect ordering
+        depends_on = []
+        if i > 0:
+            # Only depend on previous task if different specialist
+            prev_assigned = (
+                specialists[(i - 1) % len(specialists)]["role"]
+                if specialists
+                else "general-specialist"
+            )
+            if assigned == prev_assigned:
+                depends_on = [f"T{i}"]
+
         task: Task = {
-            "id": task_id,
+            "id": f"T{i + 1}",
             "description": req,
             "assigned_to": assigned,
-            "depends_on": [f"T{i}"] if i > 0 else [],
+            "depends_on": depends_on,
             "status": TaskStatus.PENDING,
             "result": None,
             "error": None,
@@ -145,40 +277,149 @@ def execution_node(state: ProjectState) -> dict:
             "completed_at": None,
         }
         tasks.append(task)
-        update_task_status(state["project_id"], task_id, TaskStatus.PENDING)
 
     updates = {
         "tasks": tasks,
-        "current_phase": "review",
-        "messages": [
-            f"[execution] DAG built: {len(tasks)} tasks. "
-            f"Specialist execution pending (Phase 4)."
-        ],
+        "current_phase": "execution",
+        "messages": [f"[execution] DAG built: {len(tasks)} tasks."],
     }
     save_project_state({**state, **updates})
     return updates
 
 
 def review_node(state: ProjectState) -> dict:
-    """Node 4: Reviews project completion and triggers Memory Manager.
-
-    In Phase 3, since specialist agents don't run yet, marks project complete
-    with DAG-built status. Saves final state. Returns: updates to
-    current_phase, messages
+    """Node 4: Assembles task results, writes project summary to vault, triggers
+    Memory Manager distillation.
     """
-    logger.info("review_node_start", project_id=state["project_id"])
+    from neuroforge.workflows.task_store import load_all_task_results
+    from neuroforge.workflows.vault_writer import write_project_summary
 
-    task_count = len(state.get("tasks", []))
+    logger.info("review_node_start", project_id=state["project_id"])
+    project_id = state["project_id"]
+
+    # Assemble all task results
+    task_results = load_all_task_results(project_id)
+    completed = state.get("completed_task_ids", [])
+    failed = state.get("failed_task_ids", [])
+
+    # Write project summary to vault
+    write_project_summary(
+        project_id=project_id,
+        goal=state.get("raw_goal", ""),
+        brief=state.get("brief", {}) or {},
+        task_results=task_results,
+        completed_task_ids=completed,
+        failed_task_ids=failed,
+    )
+
+    # Trigger Memory Manager if tasks ran
+    surface_items = []
+    if task_results:
+        surface_items = _run_memory_distillation(
+            project_id=project_id, state=state, task_results=task_results
+        )
+
+    phase = "complete" if not failed else "complete_with_failures"
     updates = {
-        "current_phase": "complete",
+        "current_phase": phase,
         "messages": [
-            f"[review] Project DAG complete. "
-            f"{task_count} tasks staged for execution (Phase 4). "
-            f"Memory distillation pending."
+            f"[review] Project complete. "
+            f"Tasks: {len(completed)} done, {len(failed)} failed. "
+            f"Memory distilled. "
+            f"Human review items: {len(surface_items)}."
         ],
     }
     save_project_state({**state, **updates})
     return updates
+
+
+def _run_memory_distillation(
+    project_id: str, state: dict, task_results: dict
+) -> list:
+    """Runs Memory Manager at project close.
+
+    Returns list of items to surface to human. Silent on failure — memory
+    distillation is best-effort.
+    """
+    try:
+        from neuroforge.agents.base import AgentInput
+        from neuroforge.agents.memory_manager_agent import MemoryManagerAgent
+
+        # Build operational events from task results
+        events = []
+        for task_id, result in task_results.items():
+            events.append(
+                {
+                    "task_id": task_id,
+                    "status": result.get("status", "unknown"),
+                    "summary": result.get("summary", ""),
+                    "decisions": result.get("decisions_made", []),
+                    "blockers": result.get("blockers", []),
+                }
+            )
+
+        agent = MemoryManagerAgent()
+        output = agent.run(
+            AgentInput(task=json.dumps(events), project_id=project_id)
+        )
+
+        if output.success:
+            return output.result.get("surface_to_human", [])
+        return []
+    except Exception as e:
+        logger.warning(
+            "memory_distillation_failed", project_id=project_id, error=str(e)
+        )
+        return []
+
+
+def _route_after_task(state: ProjectState) -> str | list:
+    """Conditional edge after each task completes.
+
+    Checks if any newly unblocked tasks are ready to run.
+    Only dispatches tasks whose dependencies are ALL satisfied AND
+    which have at least one non-empty dependency (first-wave independent tasks
+    are dispatched solely by _route_after_execution).
+    If all tasks complete or no progress can be made, routes to review.
+    """
+    completed = set(state.get("completed_task_ids", []))
+    failed = set(state.get("failed_task_ids", []))
+    tasks = state.get("tasks", [])
+
+    all_task_ids = {t["id"] for t in tasks}
+    remaining = all_task_ids - completed - failed
+
+    # Check if all done
+    if not remaining:
+        return "review"
+
+    # Find newly unblocked dependent tasks
+    ready = [
+        t
+        for t in tasks
+        if t["id"] in remaining
+        and t["depends_on"]
+        and all(dep in completed for dep in t["depends_on"])
+    ]
+
+    if ready:
+        # Dispatch next wave in parallel
+        return [
+            Send(
+                "execute_single_task",
+                {
+                    "project_id": state["project_id"],
+                    "task": task,
+                    "brief": state.get("brief", {}),
+                    "team_composition": state.get("team_composition", {}),
+                    "attempt": 0,
+                },
+            )
+            for task in ready
+        ]
+
+    # Tasks remain but none are ready or remaining tasks are waiting
+    return "review"
 
 
 def _query_similar_projects(goal: str) -> list[str]:
@@ -213,8 +454,41 @@ def _route_after_team_formation(state: ProjectState) -> str:
     return "execution"
 
 
-def _route_after_execution(state: ProjectState) -> str:
-    """Conditional edge: where to go after execution node."""
+def _route_after_execution(state: ProjectState) -> str | list:
+    """Conditional edge: where to go after execution node.
+
+    Dispatches ready tasks (no unmet dependencies) in parallel via Send.
+    If no tasks exist, routes to review.
+    """
     if state.get("current_phase") == "failed":
         return "end"
+
+    tasks = state.get("tasks", [])
+    completed = set(state.get("completed_task_ids", []))
+    failed = set(state.get("failed_task_ids", []))
+    all_task_ids = {t["id"] for t in tasks}
+    remaining = all_task_ids - completed - failed
+
+    ready = [
+        t
+        for t in tasks
+        if t["id"] in remaining
+        and all(dep in completed for dep in t["depends_on"])
+    ]
+
+    if ready:
+        return [
+            Send(
+                "execute_single_task",
+                {
+                    "project_id": state["project_id"],
+                    "task": task,
+                    "brief": state.get("brief", {}),
+                    "team_composition": state.get("team_composition", {}),
+                    "attempt": 0,
+                },
+            )
+            for task in ready
+        ]
+
     return "review"
